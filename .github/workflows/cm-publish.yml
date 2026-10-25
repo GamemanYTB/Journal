@@ -1,0 +1,54 @@
+name: Mise en ligne programmée
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+  push:
+    paths:
+      - data/schedule.json
+permissions:
+  contents: write
+concurrency:
+  group: cm-publish
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Calculer les éditions à mettre en ligne
+        run: |
+          python3 - <<'PY'
+          import json, datetime
+          now = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
+          try:
+              sched = json.load(open('data/schedule.json', encoding='utf-8'))
+          except Exception:
+              raise SystemExit(0)
+          items = []
+          for it in sched.get('items', []):
+              p = it.get('publishAt')
+              if p and p > now:
+                  continue
+              it = dict(it)
+              it.pop('publishAt', None)
+              items.append(it)
+          try:
+              old = json.load(open('data/feed.json', encoding='utf-8'))
+          except Exception:
+              old = {}
+          retired = sched.get('retired', [])
+          if old.get('items') != items or old.get('retired', []) != retired:
+              feed = {'version': 1, 'updated': now + 'Z', 'items': items, 'retired': retired}
+              json.dump(feed, open('data/feed.json', 'w', encoding='utf-8'), ensure_ascii=False)
+          PY
+      - name: Enregistrer
+        run: |
+          if [ -n "$(git status --porcelain data/feed.json)" ]; then
+            git config user.name "Le Collonges Matin"
+            git config user.email "actions@users.noreply.github.com"
+            git add data/feed.json
+            git commit -m "Mise en ligne programmée"
+            git pull --rebase
+            git push
+          fi
